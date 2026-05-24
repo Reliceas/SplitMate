@@ -26,6 +26,8 @@ bot.telegram.setMyCommands([
   { command: "add", description: "Добавить расход: /add 12000 Амир такси" },
   { command: "expenses", description: "Показать расходы" },
   { command: "balance", description: "Посчитать баланс" },
+  { command: "undo", description: "Удалить последний расход" },
+  { command: "delete", description: "Удалить расход по номеру: /delete 2" },
   { command: "split", description: "Быстро разделить сумму: /split 12000 3 такси" },
   { command: "group", description: "Как использовать в групповом чате" },
   { command: "summary", description: "Пример итогового расчёта" },
@@ -106,6 +108,46 @@ bot.command("balance", async (ctx) => {
   await ctx.reply(formatBalance(getEvent(ctx)), balanceKeyboard());
 });
 
+bot.command("undo", async (ctx) => {
+  const event = getEvent(ctx);
+  const expense = event.expenses.pop();
+
+  if (!expense) {
+    await ctx.reply("Удалять нечего: расходов пока нет. Добавь первый: /add 12000 Амир такси", eventKeyboard());
+    return;
+  }
+
+  await ctx.reply(formatExpenseRemoved("Удалил последний расход", expense, event), balanceKeyboard());
+});
+
+bot.command("delete", async (ctx) => {
+  const event = getEvent(ctx);
+  const expenseNumber = Number(commandPayload(ctx.message.text));
+
+  if (!Number.isInteger(expenseNumber) || expenseNumber < 1) {
+    await ctx.reply(deleteHelpText(), eventKeyboard());
+    return;
+  }
+
+  const index = expenseNumber - 1;
+  const expense = event.expenses[index];
+
+  if (!expense) {
+    await ctx.reply(
+      [
+        `Расхода №${expenseNumber} нет.`,
+        "",
+        formatExpenses(event),
+      ].join("\n"),
+      eventKeyboard(),
+    );
+    return;
+  }
+
+  event.expenses.splice(index, 1);
+  await ctx.reply(formatExpenseRemoved(`Удалил расход №${expenseNumber}`, expense, event), balanceKeyboard());
+});
+
 bot.command("reset", async (ctx) => {
   chatEvents.delete(chatKey(ctx));
   await ctx.reply("Текущий расчёт сброшен. Начни заново: /new Поездка в Алматы", eventKeyboard());
@@ -168,6 +210,7 @@ bot.on("text", async (ctx) => {
       "• /new Поездка в Алматы — создать расчёт",
       "• /people Амир, Али, Даник — добавить участников",
       "• /add 12000 Амир такси — добавить расход",
+      "• /undo — удалить последний расход",
       "• /balance — показать кто кому должен",
       "• /app — открыть полноценное приложение",
       "• /split 12000 3 такси — быстрый расчёт",
@@ -297,6 +340,8 @@ function helpText() {
     "/add 12000 Амир такси — добавить расход",
     "/expenses — список расходов",
     "/balance — баланс и переводы",
+    "/undo — удалить последний расход",
+    "/delete 2 — удалить расход по номеру из /expenses",
     "/split 12000 3 такси — быстро разделить сумму",
     "/group — как использовать в группе",
     "/summary — пример итогового расчёта",
@@ -307,6 +352,8 @@ function helpText() {
     "/new Поездка",
     "/people Амир, Али, Даник",
     "/add 12000 Амир такси",
+    "/expenses",
+    "/delete 1",
     "/balance",
     "",
     "Формат быстрого расчёта:",
@@ -337,7 +384,8 @@ function groupText() {
     "2. Создай событие: /new Поездка в Алматы",
     "3. Добавь участников: /people Амир, Али, Даник",
     "4. Добавляй траты: /add 12000 Амир такси",
-    "5. Смотри итог: /balance",
+    "5. Если ошибся: /undo или /delete 2",
+    "6. Смотри итог: /balance",
     "",
     "Для совсем быстрого расчёта:",
     "/split 18000 4 ужин",
@@ -369,10 +417,16 @@ function eventHelpText() {
     "2. /people Амир, Али, Даник",
     "3. /add 12000 Амир такси",
     "4. /add 7800 Али кофе",
-    "5. /balance",
+    "5. /expenses",
+    "6. /delete 2 или /undo, если ошибся",
+    "7. /balance",
     "",
     "Формат расхода:",
     "/add <сумма> <кто_платил> <описание>",
+    "",
+    "Удаление:",
+    "/undo — удалить последний расход",
+    "/delete 2 — удалить расход №2 из списка /expenses",
     "",
     "Состояние хранится в памяти запущенного бота. Для постоянного хранения следующим шагом нужен Supabase.",
   ].join("\n");
@@ -551,6 +605,19 @@ function formatExpenseAdded(event, expense) {
     `Всего расходов: ${event.expenses.length}`,
     "",
     "Посмотреть итог: /balance",
+    "Если ошибся: /undo",
+  ].join("\n");
+}
+
+function formatExpenseRemoved(prefix, expense, event) {
+  return [
+    prefix,
+    "",
+    `${expense.title} — ${formatMoney(expense.amount)} · ${expense.payer}`,
+    "",
+    `Осталось расходов: ${event.expenses.length}`,
+    "",
+    event.expenses.length > 0 ? "Обновлённый итог: /balance" : "Добавь новый расход: /add 12000 Амир такси",
   ].join("\n");
 }
 
@@ -572,7 +639,21 @@ function formatExpenses(event) {
     "",
     ...event.expenses.map((expense, index) => `${index + 1}. ${expense.title} — ${formatMoney(expense.amount)} · ${expense.payer}`),
     "",
+    "Удалить расход: /delete <номер>",
+    "Удалить последний: /undo",
     "Посчитать баланс: /balance",
+  ].join("\n");
+}
+
+function deleteHelpText() {
+  return [
+    "Укажи номер расхода из списка /expenses.",
+    "",
+    "Формат:",
+    "/delete <номер>",
+    "",
+    "Пример:",
+    "/delete 2",
   ].join("\n");
 }
 
